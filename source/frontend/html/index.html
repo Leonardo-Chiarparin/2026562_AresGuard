@@ -11,58 +11,53 @@
 
     <header class="top-bar">
         <h1>ARESGUARD // MISSION CONTROL</h1>
-        <div class="system-status">
-            <select id="user-role" onchange="updateInterfaceRole()">
+        <div style="display:flex; gap:15px; align-items:center;">
+            <select id="user-role" style="background:#222; color:#fff; padding:5px; border:1px solid #444;">
                 <option value="specialist">Mission Specialist</option>
                 <option value="engineer">System Engineer</option>
             </select>
-            <span id="conn-status">CONNECTING...</span>
+            <span id="conn-status" style="font-size:12px; font-weight:bold; color:#f59e0b;">CONNECTING...</span>
         </div>
     </header>
 
-    <main class="dashboard">
+    <main>
         <section class="sensor-grid" id="sensor-grid">
             </section>
 
-        <section id="controls-section">
-            <h3 class="section-title">Manual Actuator Overrides</h3>
-            <div class="control-grid">
-                <div class="control-card">
-                    <span class="actuator-label">Cooling Fan</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" onchange="toggleActuator('cooling_fan', this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="control-card">
-                    <span class="actuator-label">Habitat Heater</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" onchange="toggleActuator('habitat_heater', this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="control-card">
-                    <span class="actuator-label">Ventilation</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" onchange="toggleActuator('hall_ventilation', this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="control-card">
-                    <span class="actuator-label">Humidifier</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" onchange="toggleActuator('entrance_humidifier', this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
+        <h3 class="section-title">Manual Override Controls</h3>
+        <section class="control-grid" id="controls-section">
+            <div class="control-card">
+                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Cooling Fan</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" onchange="toggleActuator('cooling_fan', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="control-card">
+                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Habitat Heater</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" onchange="toggleActuator('habitat_heater', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="control-card">
+                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Hall Ventilation</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" onchange="toggleActuator('hall_ventilation', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="control-card">
+                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Humidifier</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" onchange="toggleActuator('entrance_humidifier', this.checked)">
+                    <span class="slider"></span>
+                </label>
             </div>
         </section>
 
-        <footer class="terminal">
-            <div id="log-console"></div>
-        </footer>
+        <div id="log-console"></div>
     </main>
-
     <script src="../js/script.js"></script>
 </body>
 </html>

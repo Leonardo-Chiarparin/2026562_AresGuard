@@ -1,145 +1,72 @@
-import time
-import json
-import os
-import uuid
-import datetime
-import requests
-import pika
+import time, json, os, uuid, datetime, requests, pika
 
-# --- CONFIGURATION ---
 SIMULATOR_URL = os.getenv("SIMULATOR_URL", "http://mars_simulator:8080/api/sensors")
 BROKER_HOST = os.getenv("BROKER_HOST", "aresguard_broker")
 BROKER_USER = os.getenv("RABBITMQ_DEFAULT_USER", "ares")
 BROKER_PASS = os.getenv("RABBITMQ_DEFAULT_PASS", "mars2036")
-QUEUE_NAME = "sensor_events"
-POLLING_INTERVAL = 5
+
+# CAMBIAMENTO: Usiamo un Exchange Fanout
+EXCHANGE_NAME = "sensor_broadcast"
 
 def get_rabbitmq_connection():
-    """Handles RabbitMQ connection with a retry loop for service resilience."""
     credentials = pika.PlainCredentials(BROKER_USER, BROKER_PASS)
-    parameters = pika.ConnectionParameters(host=BROKER_HOST, credentials=credentials)
     while True:
         try:
-            connection = pika.BlockingConnection(parameters)
-            print(f"[INGESTION] Connected to RabbitMQ at {BROKER_HOST}")
+            connection = pika.BlockingConnection(pika.ConnectionParameters(host=BROKER_HOST, credentials=credentials))
             return connection
-        except pika.exceptions.AMQPConnectionError:
-            print("[INGESTION] RabbitMQ not ready. Retrying in 5s...")
-            time.sleep(5)
+        except: time.sleep(5)
 
-def build_event_schema(sensor_id, value, unit):
-    """Constructs the normalized JSON event schema for the AresGuard ecosystem."""
+def build_event(sid, val, unit):
     return {
         "event_id": str(uuid.uuid4()),
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "source": {
-            "identifier": sensor_id,
-            "protocol": "rest_polling"
-        },
-        "payload": {
-            "value": value,
-            "unit": unit,
-            "category": "telemetry"
-        },
-        "metadata": {
-            "version": "1.0",
-            "tags": ["polling", "normalized"]
-        }
+        "source": { "identifier": sid, "protocol": "rest_polling" },
+        "payload": { "value": val, "unit": unit, "category": "telemetry" }
     }
 
-def process_raw_data(sensor_id, raw_data):
-    """
-    Normalizes raw data. Unpacks 'measurements' arrays for complex sensors (e.g., VOC).
-    Ensures 'air_quality_voc' mapping for frontend compatibility.
-    """
+def process_data(sid, data):
     events = []
-    
-    # CASE 1: Complex/Chemistry sensors with nested measurements
-    if 'measurements' in raw_data and isinstance(raw_data['measurements'], list):
-        for measurement in raw_data['measurements']:
-            val = measurement.get('value')
-            un = measurement.get('unit', '')
-            metric_type = measurement.get('metric', '')
-            
-            # NORMALIZATION LOGIC:
-            # If sensor is VOC and metric is voc_ppb, we use 'air_quality_voc' 
-            # as the primary ID to match the Mission Control Dashboard requirement.
-            if sensor_id == "air_quality_voc" and metric_type == "voc_ppb":
-                target_id = "air_quality_voc"
-            elif metric_type:
-                target_id = f"{sensor_id}_{metric_type}"
-            else:
-                target_id = sensor_id
-                
-            events.append(build_event_schema(target_id, val, un))
-            
-    # CASE 2: Standard scalar sensors
+    if 'level_pct' in data:
+        events.append(build_event('water_tank_level', data.get('level_pct'), '%'))
+        events.append(build_event('water_tank_liters', data.get('level_liters'), 'L'))
+    elif 'pm25_ug_m3' in data:
+        events.append(build_event('air_quality_pm1', data.get('pm1_ug_m3'), 'µg/m³'))
+        events.append(build_event('air_quality_pm25', data.get('pm25_ug_m3'), 'µg/m³'))
+        events.append(build_event('air_quality_pm10', data.get('pm10_ug_m3'), 'µg/m³'))
+    elif 'measurements' in data and isinstance(data['measurements'], list):
+        for m in data['measurements']:
+            metric = m.get('metric', '')
+            val = m.get('value')
+            target = 'air_quality_voc' if 'voc' in metric else ('air_quality_co2e' if 'co2e' in metric else ('hydroponic_ph' if 'ph' in metric else f"{sid}_{metric}"))
+            events.append(build_event(target, val, m.get('unit', '')))
     else:
-        # Check for multiple possible value keys from various simulator versions
-        val = (raw_data.get('value') or 
-               raw_data.get('level') or 
-               raw_data.get('concentration') or 
-               raw_data.get('ph'))
-        
-        if val is None: 
-            val = 0.0
-            
-        un = raw_data.get('unit', '')
-        events.append(build_event_schema(sensor_id, val, un))
-        
+        val = data.get('value')
+        if val is None:
+            for k in ['temperature', 'humidity', 'pressure', 'co2_level']:
+                if k in data: val = data[k]; break
+        events.append(build_event(sid, val, data.get('unit', '')))
     return events
 
-def fetch_sensor_list():
-    """Retrieves the list of active sensor IDs from the simulator."""
-    try:
-        response = requests.get(SIMULATOR_URL, timeout=3)
-        return response.json().get("sensors", []) if response.status_code == 200 else None
-    except requests.RequestException as e:
-        print(f"[INGESTION] Fetch list error: {e}")
-        return None
-
-def fetch_sensor_data(sensor_id):
-    """Retrieves raw data for a specific sensor ID."""
-    try:
-        response = requests.get(f"{SIMULATOR_URL}/{sensor_id}", timeout=2)
-        return response.json() if response.status_code == 200 else None
-    except requests.RequestException as e:
-        print(f"[INGESTION] Fetch data error for {sensor_id}: {e}")
-        return None
-
 def main():
-    """Main execution loop: Poll -> Normalize -> Publish."""
-    connection = get_rabbitmq_connection()
-    channel = connection.channel()
-    channel.queue_declare(queue=QUEUE_NAME, durable=True)
-
-    try:
-        while True:
-            sensors_list = fetch_sensor_list()
-            if sensors_list:
-                for sensor_id in sensors_list:
-                    raw_data = fetch_sensor_data(sensor_id)
-                    if raw_data:
-                        normalized_events = process_raw_data(sensor_id, raw_data)
-                        for event in normalized_events:
-                            channel.basic_publish(
-                                exchange='',
-                                routing_key=QUEUE_NAME,
-                                body=json.dumps(event),
-                                properties=pika.BasicProperties(delivery_mode=2)
-                            )
-                            # Log for real-time monitoring
-                            print(f"[INGESTION] Dispatched: {event['source']['identifier']} -> {event['payload']['value']}")
-            
-            time.sleep(POLLING_INTERVAL)
-            
-    except KeyboardInterrupt:
-        print("[INGESTION] Shutdown requested.")
-        connection.close()
-    except Exception as e:
-        print(f"[INGESTION] Critical error: {e}")
-        if not connection.is_closed:
-            connection.close()
+    conn = get_rabbitmq_connection()
+    ch = conn.channel()
+    
+    # DICHIARIAMO L'EXCHANGE FANOUT
+    ch.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='fanout')
+    
+    while True:
+        try:
+            r = requests.get(SIMULATOR_URL, timeout=5)
+            sensors = r.json().get("sensors", [])
+            for sid in sensors:
+                rd = requests.get(f"{SIMULATOR_URL}/{sid}", timeout=5).json()
+                evs = process_data(sid, rd)
+                for e in evs:
+                    # PUBBLICHIAMO SULL'EXCHANGE (routing_key vuota per fanout)
+                    ch.basic_publish(exchange=EXCHANGE_NAME, routing_key='', body=json.dumps(e))
+                    print(f"[INGESTION] Broadcast: {e['source']['identifier']}")
+        except Exception as e: print(f"Error: {e}")
+        time.sleep(5)
 
 if __name__ == "__main__":
     main()
