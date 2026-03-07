@@ -26,10 +26,10 @@ services:
     networks:
       - aresguard_net
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
 
   # ---------------------------------------------------------
   # DATABASE (PostgreSQL)

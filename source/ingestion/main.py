@@ -84,8 +84,10 @@ def fetch_sensor_list():
     try:
         response = requests.get(SIMULATOR_URL, timeout=3)
         if response.status_code == 200:
-            # Expected to return a list of strings, e.g., ["greenhouse_temperature", ...]
-            return response.json()
+            data = response.json()
+            # The simulator returns {"sensors": ["id1", "id2", ...]}
+            # We safely extract the list using .get()
+            return data.get("sensors", [])
         else:
             print(f"[INGESTION] Simulator error fetching sensor list: HTTP {response.status_code}")
             return None
