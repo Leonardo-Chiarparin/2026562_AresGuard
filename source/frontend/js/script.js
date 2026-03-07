@@ -1,6 +1,5 @@
 /**
- * ARESGUARD MISSION CONTROL - DASHBOARD LOGIC
- * File: source/frontend/js/script.js
+ * ARESGUARD MISSION CONTROL - UPDATED LOGIC
  */
 
 const ENDPOINTS = {
@@ -8,239 +7,233 @@ const ENDPOINTS = {
     API: "http://localhost:8000/api/commands"
 };
 
-// --- REGISTRO SENSORI (Mapping 1:1 con Ingestion Service) ---
 const SENSORS_REGISTRY = [
-    // Riga 1: Parametri Ambientali Base
-    { id: 'greenhouse_temperature', label: 'Greenhouse Temp', unit: '°C' },
-    { id: 'entrance_humidity', label: 'Entrance Humidity', unit: '%' },
-    { id: 'co2_hall', label: 'CO2 Hall Level', unit: 'ppm' },
-    { id: 'corridor_pressure', label: 'Corridor Pressure', unit: 'hPa' },
-    
-    // Riga 2: Risorse & Chimica
-    { id: 'water_tank_level', label: 'Water Tank Level', unit: '%' },
-    { id: 'water_tank_liters', label: 'Water Tank Vol', unit: 'L' },
-    { id: 'hydroponic_ph', label: 'Hydroponic pH', unit: 'pH' },
-    { id: 'air_quality_pm25', label: 'PM 2.5 Level', unit: 'µg' },
-    
-    // Riga 3: Qualità dell'Aria Avanzata
-    { id: 'air_quality_pm1', label: 'PM 1.0 Level', unit: 'µg' },
-    { id: 'air_quality_pm10', label: 'PM 10 Level', unit: 'µg' },
-    { id: 'air_quality_voc', label: 'Volatile Org. Comp', unit: 'ppb' },
-    { id: 'air_quality_co2e', label: 'CO2 Equivalent', unit: 'ppm' }
+    { id: 'greenhouse_temperature', label: 'Greenhouse Temp', unit: '°C', min: 0, max: 40 },
+    { id: 'entrance_humidity', label: 'Entrance Humidity', unit: '%', min: 0, max: 100 },
+    { id: 'co2_hall', label: 'CO2 Hall Level', unit: 'ppm', min: 400, max: 2000 },
+    { id: 'corridor_pressure', label: 'Corridor Pressure', unit: 'kPA', min: 90, max: 115 },
+    { id: 'water_tank_level', label: 'Water Tank Level', unit: '%', min: 0, max: 100 },
+    { id: 'water_tank_liters', label: 'Water Tank Vol', unit: 'L', min: 0, max: 3000 },
+    { id: 'hydroponic_ph', label: 'Hydroponic pH', unit: 'pH', min: 4.0, max: 9.0 },
+    { id: 'air_quality_pm25', label: 'PM 2.5 Level', unit: 'µg', min: 0, max: 50 },
+    { id: 'air_quality_pm1', label: 'PM 1.0 Level', unit: 'µg', min: 0, max: 30 },
+    { id: 'air_quality_pm10', label: 'PM 10 Level', unit: 'µg', min: 0, max: 60 },
+    { id: 'air_quality_voc', label: 'Volatile Org. Comp', unit: 'ppb', min: 0, max: 600 },
+    { id: 'air_quality_co2e', label: 'CO2 Equivalent', unit: 'ppm', min: 400, max: 1500 }
 ];
 
-let actuatorStates = {};
+const ACTUATOR_IDS = ['cooling_fan', 'habitat_heater', 'hall_ventilation', 'entrance_humidifier'];
 
-/**
- * Inizializzazione della Dashboard
- * Genera le card HTML in base al registro sensori.
- */
+let systemState = {
+    booted: false,
+    sensorsReceived: new Set(),
+    actuators: {} 
+};
+
 function initMissionControl() {
-    const grid = document.getElementById('sensor-grid');
-    if (!grid) {
-        console.error("Errore: Elemento #sensor-grid non trovato nell'HTML.");
-        return;
-    }
-    
-    // Generazione dinamica delle 12 card
-    grid.innerHTML = SENSORS_REGISTRY.map(s => `
-        <div class="sensor-card" id="card-${s.id}">
-            <span class="status-label status-ok" id="status-text-${s.id}">● Status: Normal</span>
-            <div class="sensor-value-group">
-                <h2 id="val-${s.id}">--.-</h2>
-                <span class="unit">${s.unit}</span>
-            </div>
-            <p class="sensor-label">${s.label}</p>
-        </div>
-    `).join('');
-    
-    addLog("System Interface Loaded. Initializing Uplink...", "#3b82f6");
+    renderGrid();
     connect();
 }
 
-/**
- * Gestione WebSocket
- * Si connette al Gateway e ascolta i dati in tempo reale.
- */
+function renderGrid() {
+    const grid = document.getElementById('sensor-grid');
+    if (!grid) return;
+    grid.innerHTML = SENSORS_REGISTRY.map(s => `
+        <div class="sensor-card" id="card-${s.id}" onclick="toggleCardView('${s.id}')">
+            <div class="view-primary">
+                <span class="status-label status-ok" id="status-${s.id}">● NORMAL</span>
+                <div class="sensor-value-group">
+                    <h2 id="val-${s.id}">--.-</h2>
+                    <span class="unit">${s.unit}</span>
+                </div>
+                <p class="sensor-label">${s.label}</p>
+            </div>
+            <div class="view-secondary">
+                <span class="status-label" style="color:#aaa;">MONITORING RANGE</span>
+                <div class="sensor-value-group">
+                    <h2 id="val-sec-${s.id}">--.-</h2>
+                    <span class="unit">${s.unit}</span>
+                </div>
+                <div class="mini-progress-container">
+                    <div class="mini-progress-bar" id="bar-${s.id}" style="width: 0%;"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; width:100%;">
+                    <p class="sensor-label">MIN: ${s.min}</p>
+                    <p class="sensor-label">MAX: ${s.max}</p>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
 function connect() {
     const socket = new WebSocket(ENDPOINTS.WS);
 
     socket.onopen = () => {
-        setOnlineStatus(true);
+        const statusEl = document.getElementById('conn-status');
+        if (statusEl) {
+            statusEl.innerText = "ONLINE";
+            statusEl.style.color = "#22c55e";
+        }
+        addLog("Data Uplink Established.", "#22c55e");
     };
 
     socket.onmessage = (event) => {
-        setOnlineStatus(true);
         try {
-            const message = JSON.parse(event.data);
+            const msg = JSON.parse(event.data);
+            if (msg.type === "PING") return;
 
-            // Ignora i messaggi di heartbeat/ping
-            if (message.type === "PING") return;
+            const data = msg.data || msg;
 
-            // Il payload può essere dentro 'data' (formato gateway) o alla radice
-            const telemetry = message.data || message;
+            Object.keys(data).forEach(key => {
+                const entry = data[key];
+                let value = entry.payload ? entry.payload.value : (entry.value !== undefined ? entry.value : entry);
 
-            // Itera su tutte le chiavi ricevute (es. greenhouse_temperature, co2_hall...)
-            Object.keys(telemetry).forEach(key => {
-                const entry = telemetry[key];
-                
-                // Estrazione sicura del valore (Unified Schema: entry.payload.value)
-                let value = null;
-                if (entry && entry.payload && entry.payload.value !== undefined) {
-                    value = entry.payload.value;
-                } else if (entry && entry.value !== undefined) {
-                    value = entry.value;
-                } else if (typeof entry === 'number') {
-                    value = entry;
-                }
-
-                if (value !== null) {
-                    updateUI(key, value);
+                if (ACTUATOR_IDS.includes(key)) {
+                    syncActuator(key, value);
+                } else {
+                    updateSensor(key, value);
+                    systemState.sensorsReceived.add(key);
                 }
             });
-
-        } catch (err) {
-            console.warn("Errore parsing WebSocket:", err);
+            checkBootSequence();
+        } catch(e) {
+            console.error("Message Processing Error:", e);
         }
     };
 
-    socket.onclose = () => {
-        setOnlineStatus(false);
-        // Tenta la riconnessione dopo 3 secondi
-        setTimeout(connect, 3000);
-    };
-    
-    socket.onerror = (err) => {
-        console.error("WebSocket Error:", err);
-        socket.close();
-    };
+    socket.onclose = () => setTimeout(connect, 3000);
 }
 
-/**
- * Aggiorna la UI per un singolo sensore
- */
-function updateUI(id, value) {
-    // Cerca se l'ID ricevuto esiste nel nostro registro
-    const sensor = SENSORS_REGISTRY.find(s => s.id === id);
+function updateSensor(id, val) {
+    const config = SENSORS_REGISTRY.find(s => s.id === id);
+    if (!config) return;
+
+    const valStr = typeof val === 'number' ? val.toFixed(1) : val;
     
-    if (sensor) {
-        const valueElement = document.getElementById(`val-${sensor.id}`);
-        if (valueElement) {
-            // Formattazione: 1 decimale per i numeri
-            valueElement.innerText = (typeof value === 'number') ? value.toFixed(1) : value;
-            
-            // Controlla se il valore è critico
-            evaluateSafetyThresholds(sensor.id, value);
-        }
+    // UI Elements Update with Null Guards
+    const elPrim = document.getElementById(`val-${id}`);
+    const elSec = document.getElementById(`val-sec-${id}`);
+    if (elPrim) elPrim.innerText = valStr;
+    if (elSec) elSec.innerText = valStr;
+
+    const bar = document.getElementById(`bar-${id}`);
+    if (bar && typeof val === 'number') {
+        let pct = ((val - config.min) / (config.max - config.min)) * 100;
+        pct = Math.max(0, Math.min(100, pct));
+        bar.style.width = `${pct}%`;
+        bar.style.background = (val < config.min || val > config.max) ? '#ef4444' : '#22c55e';
     }
-}
 
-/**
- * Logica Soglie di Sicurezza & Allarmi
- */
-function evaluateSafetyThresholds(id, val) {
     const card = document.getElementById(`card-${id}`);
-    const statusText = document.getElementById(`status-text-${id}`);
-    const banner = document.getElementById('critical-banner');
+    const statusEl = document.getElementById(`status-${id}`);
     
-    if (!card || !statusText) return;
+    let state = "NORMAL";
+    let cssClass = "status-ok";
+    let isCrit = false;
 
-    let isCritical = false;
-
-    // --- REGOLE DI ALLARME ---
-    if (id.includes('temperature') && val > 30.0) isCritical = true; // Caldo eccessivo
-    if (id.includes('humidity') && val < 20.0) isCritical = true;    // Troppo secco
-    if (id.includes('co2') && val > 1000) isCritical = true;         // Aria viziata
-    if (id === 'water_tank_level' && val < 15.0) isCritical = true;  // Acqua bassa
-    if (id.includes('voc') && val > 500) isCritical = true;          // Contaminanti
-
-    // Applicazione stili
-    if (isCritical) {
-        if (!card.classList.contains('card-alert')) {
-            card.classList.add('card-alert');
-            statusText.className = "status-label status-crit";
-            statusText.innerText = "● Status: WARNING";
-        }
-        if (banner) banner.style.display = 'block';
-    } else {
-        if (card.classList.contains('card-alert')) {
-            card.classList.remove('card-alert');
-            statusText.className = "status-label status-ok";
-            statusText.innerText = "● Status: Normal";
-        }
+    if (val > config.max || val < config.min) {
+        state = "CRITICAL";
+        cssClass = "status-crit";
+        isCrit = true;
     }
 
-    // Gestione Banner Globale: nascondilo solo se NESSUNA card è in allarme
-    if (banner) {
-        const anyAlert = document.querySelector('.card-alert');
-        if (!anyAlert) banner.style.display = 'none';
-    }
-}
-
-/**
- * Gestione Stato Connessione (UI Header)
- */
-function setOnlineStatus(isOnline) {
-    const statusEl = document.getElementById('conn-status');
     if (statusEl) {
-        if (isOnline) {
-            if (statusEl.innerText !== "ONLINE") {
-                statusEl.innerText = "ONLINE";
-                statusEl.style.color = "#22c55e"; // Verde
-                addLog("Data Stream Active.", "#22c55e");
-            }
-        } else {
-            statusEl.innerText = "OFFLINE";
-            statusEl.style.color = "#ef4444"; // Rosso
-        }
+        statusEl.innerText = `● ${state}`;
+        statusEl.className = `status-label ${cssClass}`;
+    }
+
+    if (card) {
+        if (isCrit) card.classList.add('card-alert');
+        else card.classList.remove('card-alert');
+    }
+
+    // Critical Banner Guard
+    const banner = document.getElementById('critical-banner');
+    if (banner) {
+        banner.style.display = document.querySelector('.card-alert') ? 'block' : 'none';
     }
 }
 
-/**
- * Invio Comandi Attuatori (API)
- */
-async function toggleActuator(id, isChecked) {
-    const state = isChecked ? "ON" : "OFF";
-    // Evita chiamate duplicate
-    if (actuatorStates[id] === state) return;
+function syncActuator(id, rawState) {
+    let newState = String(rawState).toUpperCase();
+    if (newState === "TRUE" || newState === "ON" || newState === "1") newState = "ON";
+    else newState = "OFF";
 
-    addLog(`Sending CMD: ${id} -> ${state}...`, "#fbbf24"); // Giallo attesa
+    if (systemState.actuators[id] === newState) return;
+    systemState.actuators[id] = newState;
 
+    const toggle = document.getElementById(`toggle-${id}`);
+    if (toggle) toggle.checked = (newState === "ON");
+
+    const statusText = document.getElementById(`status-text-${id}`);
+    if (statusText) {
+        statusText.innerText = `STATUS: ${newState}`;
+        statusText.style.color = (newState === "ON") ? "#22c55e" : "#555";
+    }
+
+    addLog(`System Confirmed: ${id} is ${newState}`, "#f59e0b");
+}
+
+async function manualToggle(id, isChecked) {
+    const newState = isChecked ? "ON" : "OFF";
+    addLog(`Manual CMD: Setting ${id} to ${newState}`, "#3b82f6");
     try {
-        const res = await fetch(`${ENDPOINTS.API}/${id}`, {
-            method: 'POST',
+        await fetch(`${ENDPOINTS.API}/${id}`, {
+            method: 'POST', 
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ state: state })
+            body: JSON.stringify({ state: newState }) // Matching Ingestion/Gateway requirements
         });
-
-        if (res.ok) {
-            actuatorStates[id] = state;
-            addLog(`ACK: ${id} set to ${state}`, "#3b82f6"); // Blu conferma
-        } else {
-            throw new Error(`HTTP ${res.status}`);
-        }
     } catch (e) {
-        addLog(`ERR: Cmd failed (${id})`, "#ef4444");
-        // Revert visivo dello switch se il comando fallisce (opzionale)
-        // document.querySelector(`input[onchange*="${id}"]`).checked = !isChecked;
+        addLog(`Link Failure: ${id} command lost.`, "#ef4444");
+        document.getElementById(`toggle-${id}`).checked = !isChecked;
     }
 }
 
-/**
- * Utility: Scrittura Log nel Terminale
- */
+function checkBootSequence() {
+    if (systemState.booted) return;
+    const count = systemState.sensorsReceived.size;
+    const total = SENSORS_REGISTRY.length;
+    const bar = document.getElementById('boot-progress');
+    const log = document.getElementById('boot-log');
+
+    if (bar) bar.style.width = `${(count / total) * 100}%`;
+    if (log) log.innerText = `Loading Modules... (${count}/${total})`;
+
+    if (count >= 5) {
+        systemState.booted = true;
+        const overlay = document.getElementById('boot-overlay');
+        if (overlay) {
+            overlay.style.opacity = '0';
+            setTimeout(() => { 
+                overlay.style.display = 'none'; 
+                addLog("AresGuard Online. Mission Active.", "#22c55e");
+            }, 800);
+        }
+    }
+}
+
+function toggleCardView(id) { 
+    const card = document.getElementById(`card-${id}`);
+    if (card) card.classList.toggle('active-view'); 
+}
+
 function addLog(msg, color) {
     const log = document.getElementById('log-console');
     if (!log) return;
-    
-    const entry = document.createElement('div');
-    entry.style.color = color || "#4ade80";
-    // Timestamp + Messaggio
-    entry.innerHTML = `<span>[${new Date().toLocaleTimeString()}]</span> > ${msg}`;
-    
-    // Inserisce in cima (i nuovi messaggi spingono giù i vecchi)
-    log.prepend(entry);
+    const row = document.createElement('div');
+    row.innerHTML = `<span style="color:#555">[${new Date().toLocaleTimeString()}]</span> <span style="color:${color}">${msg}</span>`;
+    log.prepend(row);
 }
 
-// Avvio applicazione al caricamento pagina
+function updateRole() {
+    const role = document.getElementById('user-role').value;
+    const controls = document.getElementById('controls-section');
+    if (controls) {
+        controls.style.opacity = role === 'specialist' ? '1' : '0.5';
+        controls.style.pointerEvents = role === 'specialist' ? 'auto' : 'none';
+    }
+    addLog(`Access Level: ${role.toUpperCase()}`, "#fff");
+}
+
 window.onload = initMissionControl;

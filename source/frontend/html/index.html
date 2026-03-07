@@ -2,17 +2,26 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ARESGUARD: MISSION CONTROL</title>
     <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
-    <div id="critical-banner">CRITICAL OVERRIDE: ENVIRONMENTAL PARAMETERS BEYOND SAFETY LIMITS</div>
+    <div id="boot-overlay">
+        <div class="boot-terminal">
+            <h1>SYSTEM BOOT SEQUENCE</h1>
+            <div id="boot-log">Initializing...</div>
+            <div class="progress-bar"><div class="progress-fill" id="boot-progress"></div></div>
+        </div>
+    </div>
+
+    <div id="critical-banner" style="display: none; background: #ef4444; color: white; text-align: center; padding: 10px; font-weight: bold;">
+        CRITICAL OVERRIDE: ENVIRONMENTAL PARAMETERS BEYOND SAFETY LIMITS
+    </div>
 
     <header class="top-bar">
-        <h1>ARESGUARD // MISSION CONTROL</h1>
+        <h1>ARESGUARD: MISSION CONTROL</h1>
         <div style="display:flex; gap:15px; align-items:center;">
-            <select id="user-role" style="background:#222; color:#fff; padding:5px; border:1px solid #444;">
+            <select id="user-role" onchange="updateRole()" style="background:#1a1a1a; color:#fff; border:1px solid #333; padding:5px;">
                 <option value="specialist">Mission Specialist</option>
                 <option value="engineer">System Engineer</option>
             </select>
@@ -21,43 +30,60 @@
     </header>
 
     <main>
-        <section class="sensor-grid" id="sensor-grid">
-            </section>
+        <h3 class="section-title">ENVIRONMENTAL SENSORS:</h3>
+        <section class="sensor-grid" id="sensor-grid"></section>
 
-        <h3 class="section-title">Manual Override Controls</h3>
+        <h3 class="section-title">MANUAL OVERRIDE CONTROLS:</h3>
         <section class="control-grid" id="controls-section">
             <div class="control-card">
-                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Cooling Fan</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" onchange="toggleActuator('cooling_fan', this.checked)">
-                    <span class="slider"></span>
-                </label>
+                <span class="control-label">COOLING FAN</span>
+                <div class="control-row">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-cooling_fan" onchange="manualToggle('cooling_fan', this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="actuator-status" id="status-text-cooling_fan">STATUS: OFF</span>
+                </div>
             </div>
+
             <div class="control-card">
-                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Habitat Heater</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" onchange="toggleActuator('habitat_heater', this.checked)">
-                    <span class="slider"></span>
-                </label>
+                <span class="control-label">HABITAT HEATER</span>
+                <div class="control-row">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-habitat_heater" onchange="manualToggle('habitat_heater', this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="actuator-status" id="status-text-habitat_heater">STATUS: OFF</span>
+                </div>
             </div>
+
             <div class="control-card">
-                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Hall Ventilation</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" onchange="toggleActuator('hall_ventilation', this.checked)">
-                    <span class="slider"></span>
-                </label>
+                <span class="control-label">HALL VENTILATION</span>
+                <div class="control-row">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-hall_ventilation" onchange="manualToggle('hall_ventilation', this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="actuator-status" id="status-text-hall_ventilation">STATUS: OFF</span>
+                </div>
             </div>
+
             <div class="control-card">
-                <span style="font-size:10px; color:#777; font-weight:bold; text-transform:uppercase;">Humidifier</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" onchange="toggleActuator('entrance_humidifier', this.checked)">
-                    <span class="slider"></span>
-                </label>
+                <span class="control-label">ENTRANCE HUMIDIFIER</span>
+                <div class="control-row">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-entrance_humidifier" onchange="manualToggle('entrance_humidifier', this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="actuator-status" id="status-text-entrance_humidifier">STATUS: OFF</span>
+                </div>
             </div>
         </section>
 
+        <h3 class="section-title">SYSTEM EVENT LOGS:</h3>
         <div id="log-console"></div>
     </main>
+
     <script src="../js/script.js"></script>
 </body>
 </html>
