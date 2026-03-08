@@ -138,8 +138,8 @@ function renderRules(rules) {
             <td>IF <strong>${r.sensor_id}</strong> ${r.operator} ${r.threshold}</td>
             <td>SET <strong>${r.actuator_id}</strong> TO ${r.action}</td>
             <td style="text-align:right;">
-                <button class="btn-edit" onclick="editRule('${r.rule_id}')">EDIT</button>
-                <button class="btn-del" onclick="askDeleteRule('${r.rule_id}')">DEL</button>
+                <button class="btn-edit" onclick="editRule('${r.rule_id}')">! EDIT</button>
+                <button class="btn-del" onclick="askDeleteRule('${r.rule_id}')">\\ DELETE</button>
             </td>
         </tr>
     `).join('');
@@ -194,7 +194,7 @@ function editRule(id) {
 function resetRuleForm() {
     editingRuleId = null;
     document.getElementById('rule-value').value = "";
-    document.querySelector('.btn-save').innerText = "SAVE AUTOMATION";
+    document.querySelector('.btn-save').innerText = "+ SAVE TO DB";
 }
 
 // --- SAFETY OFFICER VIEW ---
