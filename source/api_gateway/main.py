@@ -6,14 +6,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import aio_pika
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 BROKER_HOST = os.getenv("BROKER_HOST", "aresguard_broker")
 BROKER_USER = os.getenv("RABBITMQ_DEFAULT_USER", "ares")
 BROKER_PASS = os.getenv("RABBITMQ_DEFAULT_PASS", "mars2036")
 EXCHANGE_NAME = "ares_telemetry_stream"
 SIMULATOR_URL = os.getenv("SIMULATOR_URL", "http://mars_simulator:8080/api/actuators")
+DATABASE_URL = os.getenv("DATABASE_URL", "host=aresguard_db dbname=aresguard user=ares password=mars2036")
 
 sensor_state_cache = {}
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 class ConnectionManager:
     def __init__(self):
@@ -86,10 +92,8 @@ def read_root():
 def get_state():
     return sensor_state_cache
 
-# --- DEBUG PROXY ENDPOINT ---
 @app.get("/api/sensors/{sensor_id}")
 def get_sensor_data(sensor_id: str):
-    # Logga l'URL che stiamo provando a chiamare
     target_url = SIMULATOR_URL.replace("actuators", "sensors") + f"/{sensor_id}"
     
     print(f"[PROXY DEBUG] Frontend asked for: {sensor_id}", flush=True)
@@ -107,7 +111,6 @@ def get_sensor_data(sensor_id: str):
             
     except Exception as e:
         print(f"[PROXY CRITICAL] Connection failed: {e}", flush=True)
-        # Rilancia l'errore per vederlo nel frontend
         raise HTTPException(status_code=500, detail=f"Proxy Error: {str(e)}")
 
 @app.post("/api/commands/{actuator_id}")
@@ -115,6 +118,79 @@ def send_command(actuator_id: str, command: dict):
     try:
         res = requests.post(f"{SIMULATOR_URL}/{actuator_id}", json=command, timeout=3)
         return {"status": "sent", "simulator_status_code": res.status_code, "response": res.text}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/rules")
+def get_rules():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT id AS rule_id, sensor_id, operator, threshold, actuator_id, action_value AS action FROM rules")
+        rules = cur.fetchall()
+        conn.close()
+        return rules
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/rules")
+def create_rule(rule: dict):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute(
+            """
+            INSERT INTO rules (sensor_id, operator, threshold, actuator_id, action_value) 
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (sensor_id, actuator_id, action_value) 
+            DO UPDATE SET operator = EXCLUDED.operator, threshold = EXCLUDED.threshold
+            RETURNING (xmax = 0) AS is_insert;
+            """,
+            (rule['sensor_id'], rule['operator'], str(rule['threshold']), rule['actuator_id'], rule['action'])
+        )
+        
+        result = cur.fetchone()
+        is_insert = result[0] if result else True
+        
+        conn.commit()
+        conn.close()
+        
+        action_type = "inserted" if is_insert else "updated"
+        return {"status": "success", "action": action_type}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.put("/api/rules/{rule_id}")
+def update_rule(rule_id: int, rule: dict):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute(
+            """
+            UPDATE rules 
+            SET sensor_id = %s, operator = %s, threshold = %s, actuator_id = %s, action_value = %s
+            WHERE id = %s
+            """,
+            (rule['sensor_id'], rule['operator'], str(rule['threshold']), rule['actuator_id'], rule['action'], rule_id)
+        )
+        
+        conn.commit()
+        conn.close()
+        return {"status": "updated"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.delete("/api/rules/{rule_id}")
+def delete_rule(rule_id: int):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM rules WHERE id = %s", (rule_id,))
+        conn.commit()
+        conn.close()
+        return {"status": "deleted"}
     except Exception as e:
         return {"error": str(e)}
 

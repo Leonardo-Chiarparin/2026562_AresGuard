@@ -88,9 +88,8 @@ services:
       database:          
         condition: service_healthy
     networks:
-      - aresguard_net 
-    ports:
-      - "8001:8000"
+      - aresguard_net
+      
   api_gateway:
       build: ./api_gateway
       container_name: aresguard_api_gateway
@@ -109,6 +108,7 @@ services:
         - RABBITMQ_DEFAULT_USER=ares
         - RABBITMQ_DEFAULT_PASS=mars2036
         - SIMULATOR_URL=http://mars_simulator:8080/api/actuators
+        - DATABASE_URL=host=aresguard_db dbname=aresguard user=ares password=mars2036
 
   frontend:
     build: ./frontend

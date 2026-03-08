@@ -1,15 +1,10 @@
-/**
- * ARESGUARD - Unified Mission Control Script
- * Fixed: forceRefresh logic, Mission Specialist Logs, and Audit Log limit (5).
- */
-
 const host = window.location.hostname;
 
 const ENDPOINTS = {
     WS: `ws://${host}:8000/ws`,
     API: `http://${host}:8000/api/commands`,
     SIMULATOR: `http://${host}:8000/api/sensors`,
-    RULES: `http://${host}:8001/api/rules`
+    RULES: `http://${host}:8000/api/rules`
 };
 
 const SENSORS_REGISTRY = [
@@ -29,7 +24,6 @@ const SENSORS_REGISTRY = [
 
 const ACTUATOR_IDS = ['cooling_fan', 'habitat_heater', 'hall_ventilation', 'entrance_humidifier'];
 
-// --- GLOBAL STATE ---
 let systemState = { booted: false, sensorsReceived: new Set(), actuators: {}, criticalSensors: new Set() };
 let auditLogs = []; 
 let ingestionTimestamps = {}; 
@@ -39,19 +33,22 @@ let lastManualCommandTime = 0;
 let currentRulesList = [];
 let editingRuleId = null;
 
-// --- INITIALIZATION ---
+let sensorHistory = {}; 
+let activeChart = null;
+let activeChartId = null;
 
 function initMissionControl() {
     document.body.classList.add('no-scroll');
     renderGrid();
     renderEngineerViews();
     renderSafetyView();
-    connect();
     
+    const savedRole = localStorage.getItem('aresguard_active_role') || 'specialist';
+    setRole(savedRole);
+    
+    connect();
     setInterval(updateIngestionTimers, 1000);
 }
-
-// --- MISSION SPECIALIST VIEW (Main Grid) ---
 
 function renderGrid() {
     const grid = document.getElementById('sensor-grid');
@@ -64,18 +61,21 @@ function renderGrid() {
                 <p class="sensor-label">${s.label}</p>
             </div>
             <div class="view-secondary">
-                <span class="status-label" style="color:#aaa;">RANGE: ${s.min} - ${s.max}</span>
+                <button class="graph-btn" onclick="openGraph('${s.id}', event)">GRAPH</button>
+                <span class="status-label" style="color:#aaa;">MONITORING RANGE</span>
                 <div class="sensor-value-group"><h2 id="val-sec-${s.id}">--.-</h2><span class="unit">${s.unit}</span></div>
                 <div class="mini-progress-container"><div class="mini-progress-bar" id="bar-${s.id}" style="width: 0%;"></div></div>
+                <div style="display:flex; justify-content:space-between; width:100%;">
+                    <p class="sensor-label">MIN: ${s.min}</p><p class="sensor-label">MAX: ${s.max}</p>
+                </div>
                 <div class="refresh-section">
+                    <span class="auto-refresh-label">● AUTO-REFRESH (5s)</span>
                     <button class="refresh-btn" onclick="forceRefresh('${s.id}', event)">↻ FETCH</button>
                 </div>
             </div>
         </div>
     `).join('');
 }
-
-// --- AUTOMATION ENGINEER VIEW ---
 
 function renderEngineerViews() {
     const miniGrid = document.getElementById('mini-sensor-grid');
@@ -90,9 +90,9 @@ function renderEngineerViews() {
 
     const sensorSelect = document.getElementById('rule-sensor');
     if (sensorSelect) {
-        sensorSelect.innerHTML = SENSORS_REGISTRY.map(s => `<option value="${s.simId}">${s.label}</option>`).join('');
+        sensorSelect.innerHTML = SENSORS_REGISTRY.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
         sensorSelect.onchange = () => {
-            const sel = SENSORS_REGISTRY.find(x => x.simId === sensorSelect.value);
+            const sel = SENSORS_REGISTRY.find(x => x.id === sensorSelect.value);
             if (sel) {
                 const unitEl = document.getElementById('rule-unit');
                 const valInput = document.getElementById('rule-value');
@@ -132,17 +132,23 @@ function renderRules(rules) {
         return;
     }
     
-    tbody.innerHTML = rules.sort((a, b) => a.rule_id - b.rule_id).map(r => `
+    tbody.innerHTML = rules.sort((a, b) => a.rule_id - b.rule_id).map(r => {
+        const s = SENSORS_REGISTRY.find(x => x.id === r.sensor_id);
+        const displayName = s ? s.label : r.sensor_id;
+        
+        return `
         <tr>
             <td style="color:#f59e0b;">${r.rule_id}</td>
-            <td>IF <strong>${r.sensor_id}</strong> ${r.operator} ${r.threshold}</td>
-            <td>SET <strong>${r.actuator_id}</strong> TO ${r.action}</td>
-            <td style="text-align:right;">
-                <button class="btn-edit" onclick="editRule('${r.rule_id}')">! EDIT</button>
-                <button class="btn-del" onclick="askDeleteRule('${r.rule_id}')">\\ DELETE</button>
+            <td>IF <strong style="text-transform:uppercase;">${displayName}</strong> ${r.operator} ${r.threshold}</td>
+            <td>SET <strong>${r.actuator_id.toUpperCase().replace('_', ' ')}</strong> TO ${r.action}</td>
+            <td>
+                <div style="display: flex; gap: 8px; justify-content: flex-start; align-items: center; height: 100%;">
+                    <button class="btn-edit" onclick="editRule('${r.rule_id}')">! EDIT</button>
+                    <button class="btn-del" onclick="askDeleteRule('${r.rule_id}')">\\ DELETE</button>
+                </div>
             </td>
         </tr>
-    `).join('');
+    `}).join('');
 }
 
 async function saveRule() {
@@ -165,9 +171,18 @@ async function saveRule() {
         });
 
         if(res.ok) {
+            const data = await res.json();
             fetchRules(); 
-            showToast(editingRuleId ? "RULE UPDATED" : "RULE SAVED", "success");
-            addLog(`Automation DB: ${editingRuleId ? 'Updated' : 'New'} rule for ${sId}`, "#22c55e");
+            
+            if (editingRuleId) {
+                showToast("RULE UPDATED", "success");
+            } else if (data.action === "updated") {
+                showToast(`RULE OVERWRITTEN TO NEW THRESHOLD: ${val}`, "info");
+            } else {
+                showToast("NEW RULE CREATED", "success");
+            }
+            
+            addLog(`Automation DB: ${data.action || 'updated'} rule for ${sId}`, "#22c55e");
             resetRuleForm();
             lastOperationTime = new Date().toLocaleString();
             updateSystemHealth();
@@ -186,7 +201,10 @@ function editRule(id) {
     document.getElementById('rule-actuator').value = rule.actuator_id;
     document.getElementById('rule-action').value = rule.action;
 
-    document.querySelector('.btn-save').innerText = "UPDATE RULE";
+    const saveBtn = document.querySelector('.btn-save');
+    saveBtn.innerHTML = "↻ UPDATE RULE";
+    saveBtn.classList.add('btn-update'); 
+
     document.getElementById('rule-sensor').onchange();
     showToast(`EDITING RULE ${id}`, "info");
 }
@@ -194,10 +212,11 @@ function editRule(id) {
 function resetRuleForm() {
     editingRuleId = null;
     document.getElementById('rule-value').value = "";
-    document.querySelector('.btn-save').innerText = "+ SAVE TO DB";
+    
+    const saveBtn = document.querySelector('.btn-save');
+    saveBtn.innerHTML = "+ SAVE TO DB";
+    saveBtn.classList.remove('btn-update'); 
 }
-
-// --- SAFETY OFFICER VIEW ---
 
 function renderSafetyView() {
     renderIngestionTable();
@@ -228,32 +247,38 @@ function updateIngestionTimers() {
     uniqueSimIds.forEach(simId => {
         const cell = document.getElementById(`ingest-cell-${simId}`);
         if (!cell) return;
-        if (simId === 'corridor_pressure' && systemState.criticalSensors.has('corridor_pressure_value')) {
-            cell.innerHTML = `<span class="status-red">CRITICAL ALERT</span>`;
-            return;
-        }
+        
         const lastTime = ingestionTimestamps[simId];
         if (lastTime) {
             const latency = Math.floor((Date.now() - lastTime) / 1000);
-            if (latency < 10) cell.innerHTML = `<span class="status-green">● LIVE (${latency}s)</span>`; 
-            else if (latency < 30) cell.innerHTML = `<span class="status-warn">● STALE (${latency}s)</span>`;
+            if (latency < 10) cell.innerHTML = `<span class="status-green">● LIVE</span>`; 
+            else if (latency < 30) cell.innerHTML = `<span class="status-warn">● STALE</span>`;
             else cell.innerHTML = `<span class="status-red">● NO SIGNAL</span>`;
         }
     });
 }
 
-// FIX: Audit Log limited to 5 entries
 function addToAuditLog(type, actuator, action, reason) {
+    const cleanActuator = actuator.toUpperCase();
+    
+    if (auditLogs.length > 0) {
+        const lastLog = auditLogs[0];
+        if (lastLog.actuator === cleanActuator && lastLog.action === action && lastLog.type === type) {
+            return; 
+        }
+    }
+
     const newLog = { 
         timestamp: new Date().toLocaleTimeString(), 
         type: type, 
-        actuator: actuator.toUpperCase(), 
+        actuator: cleanActuator, 
         action: action, 
         reason: reason 
     };
+    
     lastOperationTime = newLog.timestamp;
-    auditLogs.unshift(newLog);
-    if (auditLogs.length > 5) auditLogs.pop(); // Limit changed to 5
+    auditLogs.unshift(newLog); 
+    if (auditLogs.length > 5) auditLogs.pop(); 
     
     renderAuditTable();
     updateSystemHealth();
@@ -262,12 +287,14 @@ function addToAuditLog(type, actuator, action, reason) {
 function renderAuditTable() {
     const tbody = document.getElementById('audit-tbody');
     if (!tbody) return;
+    
     if (auditLogs.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#555; padding:15px;">No recent events.</td></tr>`;
         return;
     }
-    tbody.innerHTML = auditLogs.map(log => `
-        <tr style="animation: slideInRow 0.3s ease-out forwards;">
+
+    const newRowsHTML = auditLogs.map(log => `
+        <tr style="transition: all 0.5s ease;">
             <td style="color:#888; font-size:10px;">${log.timestamp}</td>
             <td><span class="badge ${log.type === 'MANUAL' ? 'badge-blue' : 'badge-orange'}">${log.type}</span></td>
             <td style="font-weight:bold; color:#fff;">${log.actuator}</td>
@@ -275,6 +302,10 @@ function renderAuditTable() {
             <td style="font-size:10px; color:#aaa;">${log.reason}</td>
         </tr>
     `).join('');
+
+    if (tbody.innerHTML !== newRowsHTML) {
+        tbody.innerHTML = newRowsHTML;
+    }
 }
 
 function updateSystemHealth() {
@@ -286,8 +317,6 @@ function updateSystemHealth() {
     }
     if (opEl) opEl.innerText = lastOperationTime;
 }
-
-// --- DATA PROCESSING & NETWORK ---
 
 function connect() {
     const socket = new WebSocket(ENDPOINTS.WS);
@@ -333,9 +362,10 @@ function processEventData(entry) {
 
     if (ACTUATOR_IDS.includes(id)) {
         const newState = (String(entry.payload.value).toUpperCase() === "ON" || entry.payload.value === true) ? "ON" : "OFF";
+        
         const isRecentManual = (Date.now() - lastManualCommandTime) < 2000;
         if (!isRecentManual) {
-            addToAuditLog("AUTO", id, `SET TO ${newState}`, "System Rule Triggered");
+            addToAuditLog("AUTO", id, `SET TO ${newState}`, "Automation Rule Trigger");
         }
         syncActuator(id, entry.payload.value);
     } else {
@@ -356,6 +386,16 @@ function processEventData(entry) {
 function updateSensor(id, val) {
     const config = SENSORS_REGISTRY.find(s => s.id === id || s.simId === id);
     if (!config) return;
+
+    if (!sensorHistory[config.id]) sensorHistory[config.id] = [];
+    sensorHistory[config.id].push({ x: new Date().toLocaleTimeString(), y: val });
+    if (sensorHistory[config.id].length > 50) sensorHistory[config.id].shift();
+
+    if (activeChart && activeChartId === config.id) {
+        activeChart.data.labels = sensorHistory[config.id].map(d => d.x);
+        activeChart.data.datasets[0].data = sensorHistory[config.id].map(d => d.y);
+        activeChart.update('none'); 
+    }
     
     systemState.sensorsReceived.add(config.id);
     const displayVal = typeof val === 'number' ? val.toFixed(1) : val;
@@ -378,17 +418,30 @@ function updateSensor(id, val) {
     const isCrit = (val > config.max || val < config.min);
     const card = document.getElementById(`card-${config.id}`);
     
-    // UPDATED: Descriptive logs for Mission Specialist
+    const statusEl = document.getElementById(`status-${config.id}`);
+    
     if (isCrit) {
         if (card) card.classList.add('card-alert');
+        
+        if (statusEl) {
+            statusEl.innerText = "● CRITICAL";
+            statusEl.className = "status-label status-crit";
+        }
+
         if (!systemState.criticalSensors.has(config.id)) {
-            addLog(`CRITICAL: ${config.label} (${displayVal} ${config.unit}) out of safe range!`, "#ef4444");
+            addLog(`Critical Status: ${config.label} (${displayVal} ${config.unit}) out of safe range!`, "#ef4444");
             systemState.criticalSensors.add(config.id);
         }
     } else {
         if (card) card.classList.remove('card-alert');
+        
+        if (statusEl) {
+            statusEl.innerText = "● NORMAL";
+            statusEl.className = "status-label status-ok";
+        }
+
         if (systemState.criticalSensors.has(config.id)) {
-            addLog(`RECOVERY: ${config.label} returned to nominal levels.`, "#22c55e");
+            addLog(`Recovery Status: ${config.label} returned to nominal levels.`, "#22c55e");
             systemState.criticalSensors.delete(config.id);
         }
     }
@@ -410,15 +463,69 @@ function updateSensor(id, val) {
     updateSystemHealth();
 }
 
-// --- USER ACTIONS ---
+function openGraph(id, event) {
+    event.stopPropagation();
+    const config = SENSORS_REGISTRY.find(s => s.id === id);
+    if (!config) return;
+
+    activeChartId = id;
+    document.getElementById('graph-title').innerText = `ANALYTICS: ${config.label.toUpperCase()}`;
+    document.getElementById('graph-modal-overlay').style.display = 'flex';
+
+    const ctx = document.getElementById('liveChart').getContext('2d');
+    
+    if (activeChart) activeChart.destroy();
+
+    activeChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: (sensorHistory[id] || []).map(d => d.x),
+            datasets: [{
+                label: `${config.label} (${config.unit})`,
+                data: (sensorHistory[id] || []).map(d => d.y),
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                borderWidth: 2,
+                pointRadius: 2,
+                fill: true,
+                tension: 0.3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { grid: { color: '#222' }, ticks: { color: '#888' } },
+                x: { grid: { display: false }, ticks: { color: '#888' } }
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+function closeGraph() {
+    document.getElementById('graph-modal-overlay').style.display = 'none';
+    if (activeChart) activeChart.destroy();
+    activeChart = null;
+    activeChartId = null;
+}
 
 async function manualToggle(id, isChecked) {
+    const toggle = document.getElementById(`toggle-${id}`);
+    
+    const currentState = systemState.actuators[id] === "ON";
+    
+    toggle.checked = currentState; 
+    toggle.disabled = true; 
+    
+    if (toggle.nextElementSibling) toggle.nextElementSibling.style.opacity = "0.5";
+    document.body.style.cursor = 'wait';
+
     const newState = isChecked ? "ON" : "OFF";
     lastManualCommandTime = Date.now();
     
-    // UPDATED: Command logging for Specialist
     addLog(`Manual CMD: Transmitting ${newState} to ${id}...`, "#3b82f6");
-    addToAuditLog("MANUAL", id, `SET TO ${newState}`, "Operator Override");
+    addToAuditLog("MANUAL", id, `SET TO ${newState}`, "Mission Specialist Override");
 
     try {
         await fetch(`${ENDPOINTS.API}/${id}`, { 
@@ -426,20 +533,19 @@ async function manualToggle(id, isChecked) {
             headers: {'Content-Type': 'application/json'}, 
             body: JSON.stringify({ state: newState }) 
         });
-        showToast("COMMAND SENT", "info");
     } catch (e) { 
-        showToast("LINK FAILURE", "error"); 
         addLog(`Link Failure: ${id} command lost.`, "#ef4444");
+        toggle.disabled = false;
+        if (toggle.nextElementSibling) toggle.nextElementSibling.style.opacity = "1";
+        document.body.style.cursor = 'default';
     }
 }
 
-// FIX: forceRefresh now processes data and updates the UI
 async function forceRefresh(id, event) {
     if(event) event.stopPropagation();
     const config = SENSORS_REGISTRY.find(s => s.id === id);
     if(!config) return;
 
-    showToast(`FETCHING: ${config.shortLabel}`, "info");
     try {
         const res = await fetch(`${ENDPOINTS.SIMULATOR}/${config.simId}`);
         if(!res.ok) throw new Error();
@@ -447,7 +553,6 @@ async function forceRefresh(id, event) {
         const data = await res.json();
         let val = 0;
         
-        // Extracting value based on potential API formats
         if (data.measurements) {
             const m = data.measurements.find(m => id.includes(m.name) || id.includes(m.metric));
             val = m ? m.value : data.measurements[0].value;
@@ -458,9 +563,7 @@ async function forceRefresh(id, event) {
         
         updateSensor(id, val);
         addLog(`Manual Fetch: ${config.label} updated to ${val.toFixed(1)} ${config.unit}`, "#f59e0b");
-        showToast("FETCH COMPLETE", "success");
     } catch (e) { 
-        showToast("FETCH FAILED", "error"); 
         addLog(`Error: Manual fetch for ${config.label} failed.`, "#ef4444");
     }
 }
@@ -477,24 +580,26 @@ function askDeleteRule(id) {
     });
 }
 
-// --- UI UTILS ---
-
 function checkBootSequence() {
     if (systemState.booted) return;
+    
     const current = systemState.sensorsReceived.size;
-    const pct = (current / 5) * 100;
+    const total = SENSORS_REGISTRY.length; 
+    const pct = (current / total) * 100;
+    
     const bar = document.getElementById('boot-progress');
     const log = document.getElementById('boot-log');
+    
     if (bar) bar.style.width = `${Math.min(pct, 100)}%`;
-    if (log) log.innerHTML = `Syncing Telemetry... (${current}/5)`;
+    if (log) log.innerHTML = `Loading Modules<span class="bouncing-dots"><span>.</span><span>.</span><span>.</span></span> (${current}/${total})`;
 
-    if (current >= 5) {
+    if (current >= total) {
         systemState.booted = true;
         setTimeout(() => {
             const overlay = document.getElementById('boot-overlay');
             if (overlay) overlay.style.display = 'none';
             document.body.classList.remove('no-scroll');
-            showToast("SYSTEM ONLINE", "success");
+            
             addLog("AresGuard Online. Mission Active.", "#22c55e");
         }, 800);
     }
@@ -503,16 +608,33 @@ function checkBootSequence() {
 function showToast(msg, type) {
     const container = document.getElementById('toast-container');
     if (!container) return;
+
+    while (container.children.length >= 2) {
+        container.firstElementChild.remove();
+    }
+
     const t = document.createElement('div');
     t.className = `toast toast-${type}`;
+    
+    let color = "#22c55e"; 
+    let title = "SYSTEM NOTIFICATION";
+    if (type === "error") { color = "#ef4444"; title = "SYSTEM ALERT"; }
+    else if (type === "info") { color = "#3b82f6"; title = "SYSTEM INFO"; }
+
+    t.style.borderLeftColor = color;
+    
     t.innerHTML = `
-        <div style="color: #555; font-size: 10px; margin-bottom: 4px;">SYSTEM NOTIFICATION</div>
-        <div>> ${msg}</div>
+        <div style="color: ${color}; font-size: 9px; margin-bottom: 5px; font-weight: bold; letter-spacing: 1px;">${title}</div>
+        <div style="color: #fff; font-size: 11px;">> ${msg}</div>
     `;
+    
     container.appendChild(t);
+    
     setTimeout(() => {
-        t.style.opacity = '0';
-        setTimeout(() => t.remove(), 500);
+        t.classList.add('toast-fadeout');
+        setTimeout(() => {
+            if (t.parentNode === container) t.remove();
+        }, 400); 
     }, 3000);
 }
 
@@ -535,10 +657,26 @@ function closeModal() {
 function appendRawLog(entry) {
     const log = document.getElementById('raw-log-console');
     if (!log) return;
+
+    const time = new Date().toLocaleTimeString();
+    const blockId = `log-${time}`; 
+
+    const firstChild = log.firstElementChild;
+    if (firstChild && firstChild.dataset.blockId === blockId) {
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(entry, null, 2);
+        firstChild.appendChild(pre);
+        return;
+    }
+
     const row = document.createElement('div');
     row.className = "raw-log-entry";
-    row.innerHTML = `<span style="color:#22c55e;">> DATA:</span> <span style="color:#555">[${new Date().toLocaleTimeString()}]</span> <pre>${JSON.stringify(entry, null, 2)}</pre>`;
+    row.dataset.blockId = blockId; 
+    
+    row.innerHTML = `<span style="color:#22c55e; font-weight:bold;">> Last Normalized Event:</span> [${time}] <pre>${JSON.stringify(entry, null, 2)}</pre>`;
+    
     log.prepend(row);
+    
     if (log.children.length > 50) log.removeChild(log.lastChild);
 }
 
@@ -550,15 +688,22 @@ function addLog(msg, color) {
 function syncActuator(id, rawState) {
     let newState = (String(rawState).toUpperCase() === "ON" || rawState === true) ? "ON" : "OFF";
     const toggle = document.getElementById(`toggle-${id}`);
-    if (toggle) { toggle.checked = (newState === "ON"); toggle.disabled = false; }
+    
+    if (toggle) { 
+        toggle.checked = (newState === "ON"); 
+        toggle.disabled = false; 
+        if (toggle.nextElementSibling) toggle.nextElementSibling.style.opacity = "1";
+    }
+    
     const txt = document.getElementById(`status-text-${id}`);
     if (txt) { txt.innerHTML = `STATUS: <span style="color: ${newState==="ON"?"#22c55e":"#555"}">${newState}</span>`; }
     
-    // Log actuator sync confirmation
     if (systemState.actuators[id] !== newState && systemState.booted) {
         addLog(`System Confirmed: ${id} is now ${newState}`, "#f59e0b");
     }
+    
     systemState.actuators[id] = newState;
+    document.body.style.cursor = 'default'; 
 }
 
 function toggleCardView(id) { 
@@ -574,10 +719,20 @@ function setRole(role) {
         if (btn) btn.classList.toggle('active', r === role);
         if (view) view.style.display = r === role ? 'block' : 'none';
     });
+    
     const title = document.getElementById('main-title');
-    if (role === 'specialist') title.innerText = "ARESGUARD: MISSION CONTROL";
-    else if (role === 'engineer') { title.innerText = "ARESGUARD: AUTOMATION ENGINE"; fetchRules(); resetRuleForm(); }
-    else if (role === 'safety') { title.innerText = "ARESGUARD: SAFETY AUDIT"; renderSafetyView(); }
+    if (role === 'specialist') {
+        title.innerText = "ARESGUARD: MISSION CONTROL";
+    } else if (role === 'engineer') { 
+        title.innerText = "ARESGUARD: AUTOMATION ENGINE"; 
+        fetchRules(); 
+        resetRuleForm(); 
+    } else if (role === 'safety') { 
+        title.innerText = "ARESGUARD: SAFETY AUDIT"; 
+        renderSafetyView(); 
+    }
+    
+    localStorage.setItem('aresguard_active_role', role);
 }
 
 window.onload = initMissionControl;

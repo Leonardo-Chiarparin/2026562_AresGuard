@@ -45,22 +45,19 @@ def process_sensor_data(sid, data):
     if 'measurements' in data and isinstance(data['measurements'], list):
         for m in data['measurements']:
             metric_name = m.get('name') or m.get('metric', '')
-            val = m.get('value')
+            val = m.get('value', 0)
             unit = m.get('unit', '')
             specific_id = f"{sid}_{metric_name}" if metric_name else sid
             events.append(build_event(specific_id, val, unit))
             
-    elif len([k for k in data.keys() if k not in ['unit', 'status', 'timestamp']]) > 1:
-        for key, value in data.items():
-            if key not in ['unit', 'status', 'timestamp'] and isinstance(value, (int, float)):
-                events.append(build_event(f"{sid}_{key}", value, data.get('unit', '')))
-                
     else:
-        val = data.get('value') or data.get('level') or data.get('concentration') or data.get('ph')
-        if val is None:
-            val = 0
-        events.append(build_event(sid, val, data.get('unit', '')))
+        data_keys = [k for k in data.keys() if k not in ['unit', 'status', 'timestamp']]
         
+        for key in data_keys:
+            val = data[key]
+            if isinstance(val, (int, float)):
+                events.append(build_event(f"{sid}_{key}", val, data.get('unit', '')))
+                
     return events
 
 def main():
