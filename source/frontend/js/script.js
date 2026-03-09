@@ -13,7 +13,7 @@ const SENSORS_REGISTRY = [
     { id: 'co2_hall_value', simId: 'co2_hall', label: 'CO2 Hall Level', shortLabel: 'CO2', unit: 'ppm', min: 400, max: 1000 },
     { id: 'corridor_pressure_value', simId: 'corridor_pressure', label: 'Corridor Pressure', shortLabel: 'PRE.', unit: 'kPA', min: 90, max: 115 },
     { id: 'water_tank_level_level_pct', simId: 'water_tank_level', label: 'Water Tank Level', shortLabel: 'WATER %', unit: '%', min: 0, max: 100 },
-    { id: 'water_tank_level_level_liters', simId: 'water_tank_level', label: 'Water Tank Vol', shortLabel: 'WATER L', unit: 'L', min: 0, max: 2750 },
+    { id: 'water_tank_level_level_liters', simId: 'water_tank_level', label: 'Water Tank Vol', shortLabel: 'WATER L', unit: 'L', min: 0, max: 3000 },
     { id: 'hydroponic_ph_ph', simId: 'hydroponic_ph', label: 'Hydroponic pH', shortLabel: 'HYDRO', unit: 'pH', min: 4.0, max: 9.0 },
     { id: 'air_quality_pm25_pm25_ug_m3', simId: 'air_quality_pm25', label: 'PM 2.5 Level', shortLabel: 'PM 2.5', unit: 'µg', min: 0, max: 50 },
     { id: 'air_quality_pm25_pm1_ug_m3', simId: 'air_quality_pm25', label: 'PM 1.0 Level', shortLabel: 'PM 1.0', unit: 'µg', min: 0, max: 30 },
@@ -160,7 +160,6 @@ async function saveRule() {
 
     if (isNaN(val)) { showToast("INVALID VALUE", "error"); return; }
 
-    
     const config = SENSORS_REGISTRY.find(s => s.id === sId);
     if (config) {
         if (val < config.min || val > config.max) {
@@ -169,7 +168,6 @@ async function saveRule() {
         }
     }
 
-    
     const url = editingRuleId ? `${ENDPOINTS.RULES}/${editingRuleId}` : ENDPOINTS.RULES;
     const method = editingRuleId ? 'PUT' : 'POST';
 
@@ -765,6 +763,49 @@ function syncActuator(id, rawState) {
 function toggleCardView(id) { 
     const card = document.getElementById(`card-${id}`);
     if (card) card.classList.toggle('active-view'); 
+}
+
+// --- LOG EXPANSION LOGIC ---
+function toggleLogSize(logId, btnId) {
+    const log = document.getElementById(logId);
+    const btn = document.getElementById(btnId);
+    const backdrop = document.getElementById('log-backdrop');
+    
+    if (!log || !btn) return;
+
+    const isExpanded = log.classList.contains('expanded');
+    
+    if (isExpanded) {
+        log.classList.remove('expanded');
+        backdrop.style.display = 'none';
+        btn.innerText = "⤢ EXPAND VIEW";
+        btn.style.borderColor = "#444";
+        btn.style.color = "#666";
+        // Clear stored active elements
+        backdrop.removeAttribute('data-active-log');
+        backdrop.removeAttribute('data-active-btn');
+    } else {
+        log.classList.add('expanded');
+        backdrop.style.display = 'block';
+        btn.innerText = "⤡ MINIMIZE VIEW";
+        btn.style.borderColor = "#22c55e";
+        btn.style.color = "#22c55e";
+        // Store which log is open so backdrop knows what to close
+        backdrop.setAttribute('data-active-log', logId);
+        backdrop.setAttribute('data-active-btn', btnId);
+    }
+}
+
+function closeExpandedView() {
+    const backdrop = document.getElementById('log-backdrop');
+    if (!backdrop) return;
+    
+    const logId = backdrop.getAttribute('data-active-log');
+    const btnId = backdrop.getAttribute('data-active-btn');
+    
+    if (logId && btnId) {
+        toggleLogSize(logId, btnId);
+    }
 }
 
 function setRole(role) {

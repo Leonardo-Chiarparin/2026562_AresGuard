@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>Welcome to Mars. Please Don’t Die.</title>
-    <link rel="icon" type="image/png" href="images/icon.png">
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -82,7 +81,10 @@
             </div>
         </section>
 
-        <h3 class="section-title">SYSTEM EVENT LOGS:</h3>
+        <h3 class="section-title">
+            SYSTEM EVENT LOGS:
+            <button id="btn-expand-syslog" class="expand-btn" onclick="toggleLogSize('log-console', 'btn-expand-syslog')">⤢ EXPAND VIEW</button>
+        </h3>
         <div id="log-console"></div>
     </main>
 
@@ -132,7 +134,10 @@
             </table>
         </section>
 
-        <h3 class="section-title">REAL-TIME INGESTION LOG:</h3>
+        <h3 class="section-title">
+            REAL-TIME INGESTION LOG:
+            <button id="btn-expand-log" class="expand-btn" onclick="toggleLogSize('raw-log-console', 'btn-expand-log')">⤢ EXPAND VIEW</button>
+        </h3>
         <div id="raw-log-console"></div>
     </main>
 
@@ -201,7 +206,6 @@
                 
                 <div class="graph-controls">
                     <span id="graph-unit-badge" class="unit-badge">UNIT [ -- ]</span>
-                    
                     <button class="btn-close-graph" onclick="closeGraph()">X CLOSE</button>
                 </div>
             </div>
@@ -213,6 +217,8 @@
             </div>
         </div>
     </div>
+
+    <div id="log-backdrop" onclick="closeExpandedView()"></div>
 
     <script src="js/script.js"></script>
 </body>
