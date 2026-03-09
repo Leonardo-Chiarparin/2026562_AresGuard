@@ -137,9 +137,6 @@ def create_rule(rule: dict):
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # --- QUERY CORRETTA (UPSERT) ---
-        # Usa il vincolo UNIQUE (sensor_id, actuator_id, operator) definito in init.sql
-        # Se esiste già una regola con lo stesso operatore, aggiorna soglia e azione.
         cur.execute(
             """
             INSERT INTO rules (sensor_id, operator, threshold, actuator_id, action_value) 
